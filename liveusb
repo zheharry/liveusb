@@ -1,0 +1,161 @@
+#!/bin/sh
+# https://www.hiroom2.com/2016/06/10/ubuntu-16-04-create-customized-livedvd/
+# https://gist.github.com/jamiekurtz/26c46b3e594f8cdd453a
+# https://www.aioboot.com/en/install-grub2-from-windows/
+
+# 1 Install packages for creating LiveDVD
+sudo -E apt install -y livecd-rootfs libguestfs-tools systemd-container xorriso
+
+# 2 Create rootfs
+mkdir -p live-build/chroot
+cd live-build
+cp -a /usr/share/livecd-rootfs/live-build/auto .
+cp -a /usr/share/livecd-rootfs/live-build/ubuntu-core .
+
+PROJECT=ubuntu-core lb config --apt-http-proxy $http_proxy
+sed -i 's/precise/xenial/g' config/bootstrap
+# "Apt chroot update" didn't honor apt proxy setting, why?
+sed -i 's/minimal/standard/g' config/bootstrap
+
+sudo -E lb build
+
+# 3 Customize rootfs
+sudo cp /etc/apt/sources.list chroot/etc/apt/
+sudo rm chroot/etc/resolv.conf
+echo "ubuntu-live" | sudo tee chroot/etc/hostname
+echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
+echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
+echo "msr" >> chroot/etc/modules
+cat <<'EOF' | sudo tee -a chroot/root/.bashrc
+USB=`mount | grep findiso | awk '{print $1}'`
+MOUNTED=`mount | grep root/usb`
+if [ "$USB" != "" ] && [ "$MOUNTED" == "" ]; then
+    mount -o remount,rw $USB
+    mkdir -p /root/usb
+    mount $USB /root/usb
+fi
+EOF
+cat <<'EOF' | sudo tee chroot/etc/rc.local
+dhclient
+exit 0
+EOF
+
+# 4 extra packages
+sudo systemd-nspawn --setenv=http_proxy=$http_proxy -D chroot << EOF
+apt update -y
+apt install -y openssh-server net-tools nfs-common \
+    live-boot live-boot-initramfs-tools grub2-common lvm2 \
+    linux-image-4.4.0-96-generic linux-headers-4.4.0-96-generic \
+    linux-image-4.4.0-96-lowlatency linux-headers-4.4.0-96-lowlatency \
+    vim tree less e2fsprogs zip exfat-fuse exfat-utils ntfs-3g screen curl pkg-config libglib2.0-dev libguestfs-tools \
+    git build-essential subversion flex bison byacc qemu automake autoconf python-six htop libnuma-dev libtool uml-utilities bridge-utils \
+    numactl system-config-kickstart python-pykickstart libvirt-bin libssl-dev libcap-ng-dev libncap-dev libpcap-dev
+echo -e "set timeout=3\n\
+\n\
+insmod all_video\n\
+\n\
+menuentry 'ubuntu-live' {\n\
+  set isofile='/efi/iso/ubuntu-live.iso'\n\
+  loopback loop $isofile\n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 boot=live console=tty1 console=ttyS0,115200 iommu=pt intel_iommu=on default_hugepagesz=1G hugepagesz=1G hugepages=8 \n\
+  initrd /boot/initrd.img-4.4.0-96-generic\n\
+}" > /boot/grub/grub.cfg
+adduser user --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
+adduser user sudo
+echo "user:qwer1234" | sudo chpasswd
+EOF
+
+# 4.1 USB Ether dongle hack
+sudo cp ../AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source.tar.gz chroot/root/
+sudo systemd-nspawn -D chroot << EOF
+tar zxf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source.tar.gz
+cd AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source
+CURRENT=4.4.0-96-generic make
+CURRENT=4.4.0-96-generic make install
+cd ..
+rm -rf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source*
+echo mii >> /etc/modules
+echo asix >> /etc/modules
+EOF
+
+# 5 dpdk-ovs
+cat <<'EOF' | sudo tee chroot/root/compile_all.sh
+#!/bin/bash
+DPDKVER="16.11.3"
+OVSVER="2.7.3"
+QEMUVER="2.9.0"
+KVER="4.4.0-96-generic"
+ROOTDIR=`pwd`
+
+tar xf dpdk-${DPDKVER}.tar.xz
+cd dpdk-stable-${DPDKVER}
+make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER}
+cd x86_64-native-linuxapp-gcc
+EXTRA_CFLAGS="-Ofast " RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
+cd $ROOTDIR
+
+tar zxf openvswitch-${OVSVER}.tar.gz
+cd openvswitch-${OVSVER}
+./boot.sh
+./configure --with-dpdk=${ROOTDIR}/dpdk-stable-${DPDKVER}/x86_64-native-linuxapp-gcc CFLAGS="-Ofast"
+make CFLAGS="-Ofast -march=native" -j4
+make install
+cd $ROOTDIR
+
+tar xf qemu-${QEMUVER}.tar.xz
+cd qemu-${QEMUVER}
+./configure --target-list=x86_64-softmmu
+make -j4
+EOF
+sudo chmod +x chroot/root/compile_all.sh
+
+cat <<'EOF' | sudo tee chroot/root/start-ovs-dpdk.sh
+#!/bin/bash
+
+# terminate OVS
+rm -rf /usr/local/var/run/openvswitch
+rm -rf /usr/local/etc/openvswitch/
+rm -f /tmp/conf.db
+
+mkdir -p /usr/local/etc/openvswitch
+mkdir -p /usr/local/var/run/openvswitch
+
+# initialize new OVS database
+ovsdb-tool create /usr/local/etc/openvswitch/conf.db /usr/local/share/openvswitch/vswitch.ovsschema
+
+#start database server
+ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
+             --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
+             --pidfile --detach
+
+#initialize OVS database
+ovs-vsctl --no-wait init
+
+#start OVS with DPDK portion
+export DB_SOCK=/usr/local/var/run/openvswitch/db.sock
+
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0x2 other_config:dpdk-socket-mem="2048"
+
+ovs-vswitchd unix:$DB_SOCK --pidfile --detach
+EOF
+sudo chmod +x chroot/root/start-ovs-dpdk.sh
+
+# 6 Create ISO
+sudo rm -rf iso/
+mkdir -p iso/live
+sudo cp -a chroot/boot iso/
+sudo mksquashfs chroot iso/live/filesystem.squashfs
+sudo grub-mkrescue -o ubuntu-live.iso iso
+
+# 7 Create Qcow2 image
+# TODO ssh/hostname/workloads
+echo "creating qcow2 image ..."
+sudo virt-make-fs --size=+200M --format=qcow2 chroot filesystem.qcow2
+echo "done"
+
+# 8 backup
+echo <<'EOF'
+root@ubuntu-live:~/qemu-2.9.0/x86_64-softmmu# ./qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=/root/usb/EFI/ISO/filesystem.qcow2 -nographic -enable-kvm -name u16vm1 -kernel /boot/vmlinuz-4.4.0-96-generic -initrd /boot/initrd.img-4.4.0-96-generic -append 'root=/dev/sda console=ttyS0' -net nic,model=e1000,netdev=eth0 -netdev tap,ifname=tap0,id=eth0,script=no,downscript=no -chardev socket,id=char1,path=/usr/local/var/run/openvswitch/vhost-user0 -netdev type=vhost-user,id=net1,chardev=char1,vhostforce -device virtio-net-pci,netdev=net1,mac=00:10:20:30:40:50,csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off -chardev socket,id=char2,path=/usr/local/var/run/openvswitch/vhost-user1 -netdev type=vhost-user,id=net2,chardev=char2,vhostforce -device virtio-net-pci,netdev=net2,mac=00:10:20:30:40:51,csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off
+EOF
+
+
