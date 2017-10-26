@@ -35,20 +35,17 @@ if [ "$USB" != "" ] && [ "$MOUNTED" == "" ]; then
     mount $USB /root/usb
 fi
 EOF
-cat <<'EOF' | sudo tee chroot/etc/rc.local
-dhclient
-exit 0
-EOF
 
 # 4 extra packages
 sudo systemd-nspawn --setenv=http_proxy=$http_proxy -D chroot << EOF
 apt update -y
-apt install -y openssh-server net-tools nfs-common \
+apt build-dep qemu
+apt install -y openssh-server net-tools nfs-common uml-utilities bridge-utils \
     live-boot live-boot-initramfs-tools grub2-common lvm2 \
     linux-image-4.4.0-96-generic linux-headers-4.4.0-96-generic \
     linux-image-4.4.0-96-lowlatency linux-headers-4.4.0-96-lowlatency \
     vim tree less e2fsprogs zip exfat-fuse exfat-utils ntfs-3g screen curl pkg-config libglib2.0-dev libguestfs-tools \
-    git build-essential subversion flex bison byacc qemu automake autoconf python-six htop libnuma-dev libtool uml-utilities bridge-utils \
+    git build-essential subversion flex bison byacc qemu-kvm automake autoconf python-six htop libnuma-dev libtool \
     numactl system-config-kickstart python-pykickstart libvirt-bin libssl-dev libcap-ng-dev libncap-dev libpcap-dev
 echo -e "set timeout=3\n\
 \n\
@@ -57,7 +54,7 @@ insmod all_video\n\
 menuentry 'ubuntu-live' {\n\
   set isofile='/efi/iso/ubuntu-live.iso'\n\
   loopback loop $isofile\n\
-  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 boot=live console=tty1 console=ttyS0,115200 iommu=pt intel_iommu=on default_hugepagesz=1G hugepagesz=1G hugepages=8 \n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=6,7,8,9,10,11,12,13,14,15 boot=live console=tty1 console=ttyS0,115200 iommu=pt intel_iommu=on default_hugepagesz=1G hugepagesz=1G hugepages=64 \n\
   initrd /boot/initrd.img-4.4.0-96-generic\n\
 }" > /boot/grub/grub.cfg
 adduser user --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
@@ -79,16 +76,20 @@ echo asix >> /etc/modules
 EOF
 
 # 5 dpdk-ovs
-cat <<'EOF' | sudo tee chroot/root/compile_all.sh
+cat <<'EOF' | sudo tee chroot/root/1-compile_all.sh
 #!/bin/bash
-DPDKVER="16.11.3"
-OVSVER="2.7.3"
+DPDKVER="16.07.2"
+OVSVER="2.6.1"
 QEMUVER="2.9.0"
 KVER="4.4.0-96-generic"
 ROOTDIR=`pwd`
 
 tar xf dpdk-${DPDKVER}.tar.xz
-cd dpdk-stable-${DPDKVER}
+cd dpdk-stable-{DPDKVER}
+## required for dpdk-2.2.0 only
+#sed -i 's/CONFIG_RTE_APP_TEST=y/CONFIG_RTE_APP_TEST=n/' config/common_linuxapp
+#sed -i 's/CONFIG_RTE_BUILD_COMBINE_LIBS=n/CONFIG_RTE_BUILD_COMBINE_LIBS=y/' config/common_linuxapp
+#sed -i 's/ROOTDIRS-y := lib drivers app/ROOTDIRS-y := lib drivers/' GNUmakefile
 make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER}
 cd x86_64-native-linuxapp-gcc
 EXTRA_CFLAGS="-Ofast " RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
@@ -107,9 +108,9 @@ cd qemu-${QEMUVER}
 ./configure --target-list=x86_64-softmmu
 make -j4
 EOF
-sudo chmod +x chroot/root/compile_all.sh
+sudo chmod +x chroot/root/1-compile_all.sh
 
-cat <<'EOF' | sudo tee chroot/root/start-ovs-dpdk.sh
+cat <<'EOF' | sudo tee chroot/root/2-start-ovs-dpdk.sh
 #!/bin/bash
 
 # terminate OVS
@@ -140,6 +141,20 @@ ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
 sudo chmod +x chroot/root/start-ovs-dpdk.sh
 
+cat <<'EOF' | sudo tee chroot/root/3-createports_4p_pvp_1pmd.sh
+#!/bin/bash
+
+#create OVS DPDK Bridge and add four physical NICs
+ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev
+
+ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostuser
+ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
+ovs-vsctl add-port br0 vhost-user2 -- set Interface vhost-user2 type=dpdkvhostuser
+ovs-vsctl add-port br0 vhost-user3 -- set Interface vhost-user3 type=dpdkvhostuser
+
+ovs-vsctl show
+EOF
+
 # 6 Create ISO
 sudo rm -rf iso/
 mkdir -p iso/live
@@ -149,13 +164,15 @@ sudo grub-mkrescue -o ubuntu-live.iso iso
 
 # 7 Create Qcow2 image
 # TODO ssh/hostname/workloads
+sudo systemd-nspawn -D chroot << EOF
+echo "ubuntu-vm" | tee /etc/hostname
+echo "127.0.0.1 ubuntu-vm localhost" | tee /etc/hosts
+apt remove -y --purge libvirt-bin qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
+EOF
 echo "creating qcow2 image ..."
 sudo virt-make-fs --size=+200M --format=qcow2 chroot filesystem.qcow2
 echo "done"
 
 # 8 backup
-echo <<'EOF'
-root@ubuntu-live:~/qemu-2.9.0/x86_64-softmmu# ./qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=/root/usb/EFI/ISO/filesystem.qcow2 -nographic -enable-kvm -name u16vm1 -kernel /boot/vmlinuz-4.4.0-96-generic -initrd /boot/initrd.img-4.4.0-96-generic -append 'root=/dev/sda console=ttyS0' -net nic,model=e1000,netdev=eth0 -netdev tap,ifname=tap0,id=eth0,script=no,downscript=no -chardev socket,id=char1,path=/usr/local/var/run/openvswitch/vhost-user0 -netdev type=vhost-user,id=net1,chardev=char1,vhostforce -device virtio-net-pci,netdev=net1,mac=00:10:20:30:40:50,csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off -chardev socket,id=char2,path=/usr/local/var/run/openvswitch/vhost-user1 -netdev type=vhost-user,id=net2,chardev=char2,vhostforce -device virtio-net-pci,netdev=net2,mac=00:10:20:30:40:51,csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off
-EOF
 
 
