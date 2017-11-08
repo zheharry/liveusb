@@ -26,6 +26,8 @@ echo "ubuntu-live" | sudo tee chroot/etc/hostname
 echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
 echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
 echo "msr" >> chroot/etc/modules
+echo "auto enx001060b1dcc4" >> /etc/network/interfaces
+echo "	iface enx001060b1dcc4 inet dhcp" >> /etc/network/interfaces
 cat <<'EOF' | sudo tee -a chroot/root/.bashrc
 USB=`mount | grep findiso | awk '{print $1}'`
 MOUNTED=`mount | grep root/usb`
@@ -54,7 +56,7 @@ insmod all_video\n\
 menuentry 'ubuntu-live' {\n\
   set isofile='/efi/iso/ubuntu-live.iso'\n\
   loopback loop $isofile\n\
-  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=6,7,8,9,10,11,12,13,14,15 boot=live console=tty1 console=ttyS0,115200 iommu=pt intel_iommu=on default_hugepagesz=1G hugepagesz=1G hugepages=64 \n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=1-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=1-15 rcu_nocbs=1-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
   initrd /boot/initrd.img-4.4.0-96-generic\n\
 }" > /boot/grub/grub.cfg
 adduser user --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
@@ -78,18 +80,17 @@ EOF
 # 5 dpdk-ovs
 cat <<'EOF' | sudo tee chroot/root/1-compile_all.sh
 #!/bin/bash
-DPDKVER="16.07.2"
-OVSVER="2.6.1"
+DPDKVER="17.05.1"
+OVSVER="2.8.1"
 QEMUVER="2.9.0"
 KVER="4.4.0-96-generic"
 ROOTDIR=`pwd`
 
 tar xf dpdk-${DPDKVER}.tar.xz
-cd dpdk-stable-{DPDKVER}
-## required for dpdk-2.2.0 only
-#sed -i 's/CONFIG_RTE_APP_TEST=y/CONFIG_RTE_APP_TEST=n/' config/common_linuxapp
-#sed -i 's/CONFIG_RTE_BUILD_COMBINE_LIBS=n/CONFIG_RTE_BUILD_COMBINE_LIBS=y/' config/common_linuxapp
-#sed -i 's/ROOTDIRS-y := lib drivers app/ROOTDIRS-y := lib drivers/' GNUmakefile
+cd dpdk-stable-${DPDKVER}
+sed -i 's/CONFIG_RTE_APP_TEST=y/CONFIG_RTE_APP_TEST=n/' config/common_linuxapp
+sed -i 's/CONFIG_RTE_BUILD_COMBINE_LIBS=n/CONFIG_RTE_BUILD_COMBINE_LIBS=y/' config/common_linuxapp
+sed -i 's/ROOTDIRS-y := lib drivers app/ROOTDIRS-y := lib drivers/' GNUmakefile
 make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER}
 cd x86_64-native-linuxapp-gcc
 EXTRA_CFLAGS="-Ofast " RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
@@ -108,7 +109,6 @@ cd qemu-${QEMUVER}
 ./configure --target-list=x86_64-softmmu
 make -j4
 EOF
-sudo chmod +x chroot/root/1-compile_all.sh
 
 cat <<'EOF' | sudo tee chroot/root/2-start-ovs-dpdk.sh
 #!/bin/bash
@@ -139,7 +139,6 @@ ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:
 
 ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
-sudo chmod +x chroot/root/start-ovs-dpdk.sh
 
 cat <<'EOF' | sudo tee chroot/root/3-createports_4p_pvp_1pmd.sh
 #!/bin/bash
@@ -151,9 +150,57 @@ ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostus
 ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user2 -- set Interface vhost-user2 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user3 -- set Interface vhost-user3 type=dpdkvhostuser
+ovs-vsctl show br0
 
-ovs-vsctl show
+ovs-ofctl add-flow br0 in_port=2,dl_type=0x800,idle_timeout=0,action=output:1
+ovs-ofctl add-flow br0 in_port=1,dl_type=0x800,idle_timeout=0,action=output:2
+ovs-ofctl dump-flows br0
 EOF
+
+cat <<'EOF' | sudo tee chroot/root/4-power_on_vm-vhost-user-4VM.sh
+#!/bin/bash
+
+declare -a core=('10,11' '12,13' '14,15' '16,17');
+declare -a macid=('00:01:00:00:00:01' '00:02:00:00:00:02' '00:03:00:00:00:03' '00:04:00:00:00:04' '00:05:00:00:00:05' '00:06:00:00:00:06' '00:07:00:00:00:07' '00:08:00:00:00:08');
+bra=virbr0
+ip=10
+p1=0
+p2=1
+for ((num=0; num<=0; num++))
+do
+        vm=/root/usb/EFI/ISO/filesystem.qcow2
+        vm_name=VM-"$num"
+        vnc="$num"
+        n1=tap$num
+        mac1=00:00:14:42:04:2"$num"
+        if [ ! -f $vm ];
+        then
+           echo "VM $vm not found!"
+        else
+           #echo "VM $vm started! VNC: $vnc, net0: 192.168.122.$ip"
+           tunctl -d $n1
+           tunctl -t $n1
+           brctl addif $bra $n1
+           ifconfig $n1 0.0.0.0 up
+
+           taskset -c "${core[$num]}"  ./qemu-2.9.0/x86_64-softmmu/qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=$vm -rtc clock=host \
+          -kernel /boot/vmlinuz-4.4.0-96-generic -initrd /boot/initrd.img-4.4.0-96-generic -append 'root=/dev/sda rw console=ttyS0 nmi_watchdog=0' \
+          -enable-kvm -name $vm_name \
+          -object memory-backend-file,id=mem,size=4096M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -mem-prealloc \
+          -net nic,model=e1000,netdev=eth0,macaddr=$mac1 \
+          -netdev tap,ifname=$n1,id=eth0,script=no,downscript=no \
+          -chardev socket,id=char1,path=/usr/local/var/run/openvswitch/vhost-user"$p1" \
+          -netdev type=vhost-user,id=net1,chardev=char1,vhostforce -device virtio-net-pci,netdev=net1,mac=${macid[$p1]},csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off \
+          -chardev socket,id=char2,path=/usr/local/var/run/openvswitch/vhost-user"$p2" \
+          -netdev type=vhost-user,id=net2,chardev=char2,vhostforce -device virtio-net-pci,netdev=net2,mac=${macid[$p2]},csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off \
+          -nographic -snapshot
+        fi
+        ip=$((ip+1))
+        p1=$((p1+2))
+        p2=$((p2+2))
+done
+EOF
+sudo chmod +x chroot/root/*
 
 # 6 Create ISO
 sudo rm -rf iso/
@@ -162,17 +209,58 @@ sudo cp -a chroot/boot iso/
 sudo mksquashfs chroot iso/live/filesystem.squashfs
 sudo grub-mkrescue -o ubuntu-live.iso iso
 
-# 7 Create Qcow2 image
-# TODO ssh/hostname/workloads
+# 7 Create qcow2 image
+# TODO hostname/workloads
 sudo systemd-nspawn -D chroot << EOF
 echo "ubuntu-vm" | tee /etc/hostname
+echo 'uio' >> /etc/modules
 echo "127.0.0.1 ubuntu-vm localhost" | tee /etc/hosts
 apt remove -y --purge libvirt-bin qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
+sed -i 's/PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
+rm /root/*.sh
+echo "auto ens3" >> /etc/network/interfaces
+echo "	iface ens3 inet dhcp" >> /etc/network/interfaces
 EOF
+
+cat <<'EOF' | sudo tee chroot/root/1-prepare_all.sh
+#!/bin/bash
+DPDKVER="16.07.2"
+PKTGENVER="3.1.2"
+
+sysctl -w net.ipv4.ip_forward=0
+sysctl -w kernel.randomize_va_space=0
+rmmod igb_uio
+
+echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+mount -t hugetlbfs -o pagesize=2M none /dev/hugepages
+
+tar xf dpdk-${DPDKVER}.tar.xz
+tar xf pktgen-${PKTGENVER}.tar.xz
+
+cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc;
+modprobe uio
+insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
+usertools/dpdk-devbind.py --bind=igb_uio 00:04.0
+sleep 1
+usertools/dpdk-devbind.py --bind=igb_uio 00:05.0
+sleep 1
+cd ..
+
+cd pktgen-${PKTGENVER}; RTE_SDK=/root/dpdk-stable-${DPDKVER} RTE_TARGET=x86_64-native-linuxapp-gcc make; cd ..
+
+echo "################################################"
+echo "app/x86_64-native-linuxapp-gcc/pktgen -c 0x3 -n 4 -- -P -m \"1.0, 2.1\""
+echo "################################################"
+
+EOF
+
 echo "creating qcow2 image ..."
-sudo virt-make-fs --size=+200M --format=qcow2 chroot filesystem.qcow2
+sudo virt-make-fs --size=+500M --format=qcow2 chroot filesystem.qcow2
 echo "done"
 
-# 8 backup
+# 8 Finish
+exit 0
+
+# 999 backup
 
 
