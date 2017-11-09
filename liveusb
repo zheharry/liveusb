@@ -38,6 +38,8 @@ if [ "$USB" != "" ] && [ "$MOUNTED" == "" ]; then
 fi
 EOF
 
+# 3.1 performance tune
+
 # 4 extra packages
 sudo systemd-nspawn --setenv=http_proxy=$http_proxy -D chroot << EOF
 apt update -y
@@ -92,8 +94,20 @@ sed -i 's/CONFIG_RTE_APP_TEST=y/CONFIG_RTE_APP_TEST=n/' config/common_linuxapp
 sed -i 's/CONFIG_RTE_BUILD_COMBINE_LIBS=n/CONFIG_RTE_BUILD_COMBINE_LIBS=y/' config/common_linuxapp
 sed -i 's/ROOTDIRS-y := lib drivers app/ROOTDIRS-y := lib drivers/' GNUmakefile
 make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER}
+
+modprobe uio
+insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
+*tools/dpdk-devbind.py --bind=igb_uio b3:00.0
+sleep 1
+*tools/dpdk-devbind.py --bind=igb_uio b3:00.1
+sleep 1
+*tools/dpdk-devbind.py --bind=igb_uio b3:00.2
+sleep 1
+*tools/dpdk-devbind.py --bind=igb_uio b3:00.3
+sleep 1
+
 cd x86_64-native-linuxapp-gcc
-EXTRA_CFLAGS="-Ofast " RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
+EXTRA_CFLAGS="-Ofast" RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
 cd $ROOTDIR
 
 tar zxf openvswitch-${OVSVER}.tar.gz
@@ -146,14 +160,25 @@ cat <<'EOF' | sudo tee chroot/root/3-createports_4p_pvp_1pmd.sh
 #create OVS DPDK Bridge and add four physical NICs
 ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev
 
+# physical ports
+ovs-vsctl add-port br0 dpdk0 -- set Interface dpdk0 type=dpdk options:dpdk-devargs=0000:b3:00.0
+ovs-vsctl add-port br0 dpdk1 -- set Interface dpdk1 type=dpdk options:dpdk-devargs=0000:b3:00.1
+ovs-vsctl add-port br0 dpdk2 -- set Interface dpdk2 type=dpdk options:dpdk-devargs=0000:b3:00.2
+ovs-vsctl add-port br0 dpdk3 -- set Interface dpdk3 type=dpdk options:dpdk-devargs=0000:b3:00.3
+# vhost-user ports
 ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user2 -- set Interface vhost-user2 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user3 -- set Interface vhost-user3 type=dpdkvhostuser
-ovs-vsctl show br0
+ovs-vsctl show
 
-ovs-ofctl add-flow br0 in_port=2,dl_type=0x800,idle_timeout=0,action=output:1
-ovs-ofctl add-flow br0 in_port=1,dl_type=0x800,idle_timeout=0,action=output:2
+#ovs-ofctl add-flow br0 in_port=2,dl_type=0x800,idle_timeout=0,action=output:1
+#ovs-ofctl add-flow br0 in_port=1,dl_type=0x800,idle_timeout=0,action=output:2
+ovs-ofctl add-flow br0 in_port=1,action=output:5
+ovs-ofctl add-flow br0 in_port=6,action=output:2
+ovs-ofctl add-flow br0 in_port=3,action=output:7
+ovs-ofctl add-flow br0 in_port=8,action=output:4
+ovs-ofctl add-flow br0 in_port=1,action=output:2
 ovs-ofctl dump-flows br0
 EOF
 
@@ -222,6 +247,7 @@ echo "auto ens3" >> /etc/network/interfaces
 echo "	iface ens3 inet dhcp" >> /etc/network/interfaces
 EOF
 
+# 7.1 dpdk/pktgen/testcmd
 cat <<'EOF' | sudo tee chroot/root/1-prepare_all.sh
 #!/bin/bash
 DPDKVER="16.07.2"
@@ -240,9 +266,9 @@ tar xf pktgen-${PKTGENVER}.tar.xz
 cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc;
 modprobe uio
 insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
-usertools/dpdk-devbind.py --bind=igb_uio 00:04.0
+*tools/dpdk-devbind.py --bind=igb_uio 00:04.0
 sleep 1
-usertools/dpdk-devbind.py --bind=igb_uio 00:05.0
+*tools/dpdk-devbind.py --bind=igb_uio 00:05.0
 sleep 1
 cd ..
 

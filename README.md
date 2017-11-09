@@ -1,2 +1,2 @@
 # liveusb
-live usb/iso for COTS network test
+live usb/iso for CTOS network test
