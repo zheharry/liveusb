@@ -57,13 +57,14 @@ insmod all_video\n\
 \n\
 menuentry 'ubuntu-live' {\n\
   set isofile='/efi/iso/ubuntu-live.iso'\n\
-  loopback loop $isofile\n\
-  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=1-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=1-15 rcu_nocbs=1-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
+  loopback loop \$isofile\n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=4-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=4-15 rcu_nocbs=4-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
   initrd /boot/initrd.img-4.4.0-96-generic\n\
 }" > /boot/grub/grub.cfg
 adduser user --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
 adduser user sudo
 echo "user:qwer1234" | sudo chpasswd
+mkdir -p .ssh; ssh-keygen -f .ssh/id_rsa -t rsa -N ''
 EOF
 
 # 4.1 USB Ether dongle hack
@@ -79,7 +80,7 @@ echo mii >> /etc/modules
 echo asix >> /etc/modules
 EOF
 
-# 5 dpdk-ovs
+# 5 dpdk/ovs/qemu/trex
 cat <<'EOF' | sudo tee chroot/root/1-compile_all.sh
 #!/bin/bash
 DPDKVER="17.05.1"
@@ -141,7 +142,7 @@ ovsdb-tool create /usr/local/etc/openvswitch/conf.db /usr/local/share/openvswitc
 #start database server
 ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
              --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
-             --pidfile --detach
+             --pidfile --detach --log-file
 
 #initialize OVS database
 ovs-vsctl --no-wait init
@@ -149,7 +150,7 @@ ovs-vsctl --no-wait init
 #start OVS with DPDK portion
 export DB_SOCK=/usr/local/var/run/openvswitch/db.sock
 
-ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0x2 other_config:dpdk-socket-mem="2048"
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0x2 other_config:dpdk-socket-mem="2048" other_config:dpdk-file-prefix="ovs"
 
 ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
@@ -163,8 +164,8 @@ ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev
 # physical ports
 ovs-vsctl add-port br0 dpdk0 -- set Interface dpdk0 type=dpdk options:dpdk-devargs=0000:b3:00.0
 ovs-vsctl add-port br0 dpdk1 -- set Interface dpdk1 type=dpdk options:dpdk-devargs=0000:b3:00.1
-ovs-vsctl add-port br0 dpdk2 -- set Interface dpdk2 type=dpdk options:dpdk-devargs=0000:b3:00.2
-ovs-vsctl add-port br0 dpdk3 -- set Interface dpdk3 type=dpdk options:dpdk-devargs=0000:b3:00.3
+#ovs-vsctl add-port br0 dpdk2 -- set Interface dpdk2 type=dpdk options:dpdk-devargs=0000:b3:00.2
+#ovs-vsctl add-port br0 dpdk3 -- set Interface dpdk3 type=dpdk options:dpdk-devargs=0000:b3:00.3
 # vhost-user ports
 ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
@@ -174,11 +175,12 @@ ovs-vsctl show
 
 #ovs-ofctl add-flow br0 in_port=2,dl_type=0x800,idle_timeout=0,action=output:1
 #ovs-ofctl add-flow br0 in_port=1,dl_type=0x800,idle_timeout=0,action=output:2
-ovs-ofctl add-flow br0 in_port=1,action=output:5
+ovs-ofctl add-flow br0 in_port=1,action=output:3
+ovs-ofctl add-flow br0 in_port=4,action=output:5
 ovs-ofctl add-flow br0 in_port=6,action=output:2
-ovs-ofctl add-flow br0 in_port=3,action=output:7
-ovs-ofctl add-flow br0 in_port=8,action=output:4
-ovs-ofctl add-flow br0 in_port=1,action=output:2
+ovs-ofctl add-flow br0 in_port=2,action=output:6
+ovs-ofctl add-flow br0 in_port=5,action=output:4
+ovs-ofctl add-flow br0 in_port=3,action=output:1
 ovs-ofctl dump-flows br0
 EOF
 
@@ -188,11 +190,10 @@ cat <<'EOF' | sudo tee chroot/root/4-power_on_vm-vhost-user-4VM.sh
 declare -a core=('10,11' '12,13' '14,15' '16,17');
 declare -a macid=('00:01:00:00:00:01' '00:02:00:00:00:02' '00:03:00:00:00:03' '00:04:00:00:00:04' '00:05:00:00:00:05' '00:06:00:00:00:06' '00:07:00:00:00:07' '00:08:00:00:00:08');
 bra=virbr0
-ip=10
-p1=0
-p2=1
 for ((num=0; num<=0; num++))
 do
+        p1=$((2*$num))
+        p2=$((2*$num+1))
         vm=/root/usb/EFI/ISO/filesystem.qcow2
         vm_name=VM-"$num"
         vnc="$num"
@@ -202,7 +203,7 @@ do
         then
            echo "VM $vm not found!"
         else
-           #echo "VM $vm started! VNC: $vnc, net0: 192.168.122.$ip"
+           #echo "VM $vm started! VNC: $vnc, net0: 192.168.122.1$num"
            tunctl -d $n1
            tunctl -t $n1
            brctl addif $bra $n1
@@ -220,12 +221,24 @@ do
           -netdev type=vhost-user,id=net2,chardev=char2,vhostforce -device virtio-net-pci,netdev=net2,mac=${macid[$p2]},csum=off,gso=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,mrg_rxbuf=off \
           -nographic -snapshot
         fi
-        ip=$((ip+1))
-        p1=$((p1+2))
-        p2=$((p2+2))
 done
 EOF
-sudo chmod +x chroot/root/*
+
+cat <<'EOF' | sudo tee chroot/root/5-prepare-vm.sh
+#!/bin/bash
+
+scp dpdk-16.07.2.tar.xz root@192.168.122.169:; ssh root@192.168.122.169 'tar xf dpdk-16.07.2.tar.xz; cd dpdk-stable-16.07.2; make install T=x86_64-native-linuxapp-gcc'
+scp dpdk-16.07.2.tar.xz root@192.168.122.170:; ssh root@192.168.122.170 'tar xf dpdk-16.07.2.tar.xz; cd dpdk-stable-16.07.2; make install T=x86_64-native-linuxapp-gcc'
+
+EOF
+
+cat <<'EOF' | sudo tee -a chroot/etc/trex_cfg.yaml
+- port_limit      : 2         # this option can limit the number of port of the platform
+  version         : 2
+  interfaces      : ["b3:00.2","b3:00.3"]
+  limit_memory    : 2048
+  prefix: trex
+EOF
 
 # 6 Create ISO
 sudo rm -rf iso/
@@ -243,6 +256,8 @@ echo "127.0.0.1 ubuntu-vm localhost" | tee /etc/hosts
 apt remove -y --purge libvirt-bin qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
 sed -i 's/PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
 rm /root/*.sh
+mv .ssh/id_rsa.pub .ssh/authorized_keys
+rm .ssh/id_rsa
 echo "auto ens3" >> /etc/network/interfaces
 echo "	iface ens3 inet dhcp" >> /etc/network/interfaces
 EOF
@@ -255,28 +270,19 @@ PKTGENVER="3.1.2"
 
 sysctl -w net.ipv4.ip_forward=0
 sysctl -w kernel.randomize_va_space=0
-rmmod igb_uio
+#rmmod igb_uio
 
 echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
 mount -t hugetlbfs -o pagesize=2M none /dev/hugepages
 
-tar xf dpdk-${DPDKVER}.tar.xz
-tar xf pktgen-${PKTGENVER}.tar.xz
-
-cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc;
 modprobe uio
+cd dpdk-stable-${DPDKVER}
 insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
 *tools/dpdk-devbind.py --bind=igb_uio 00:04.0
 sleep 1
 *tools/dpdk-devbind.py --bind=igb_uio 00:05.0
 sleep 1
 cd ..
-
-cd pktgen-${PKTGENVER}; RTE_SDK=/root/dpdk-stable-${DPDKVER} RTE_TARGET=x86_64-native-linuxapp-gcc make; cd ..
-
-echo "################################################"
-echo "app/x86_64-native-linuxapp-gcc/pktgen -c 0x3 -n 4 -- -P -m \"1.0, 2.1\""
-echo "################################################"
 
 EOF
 
