@@ -25,9 +25,9 @@ sudo rm chroot/etc/resolv.conf
 echo "ubuntu-live" | sudo tee chroot/etc/hostname
 echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
 echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
-echo "msr" >> chroot/etc/modules
-echo "auto enx001060b1dcc4" >> /etc/network/interfaces
-echo "	iface enx001060b1dcc4 inet dhcp" >> /etc/network/interfaces
+echo "msr" | sudo tee -a chroot/etc/modules
+echo "auto enx001060b1dcc4" | sudo tee -a /etc/network/interfaces
+echo "	iface enx001060b1dcc4 inet dhcp" | sudo tee -a /etc/network/interfaces
 cat <<'EOF' | sudo tee -a chroot/root/.bashrc
 USB=`mount | grep findiso | awk '{print $1}'`
 MOUNTED=`mount | grep root/usb`
@@ -101,10 +101,6 @@ insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
 *tools/dpdk-devbind.py --bind=igb_uio b3:00.0
 sleep 1
 *tools/dpdk-devbind.py --bind=igb_uio b3:00.1
-sleep 1
-*tools/dpdk-devbind.py --bind=igb_uio b3:00.2
-sleep 1
-*tools/dpdk-devbind.py --bind=igb_uio b3:00.3
 sleep 1
 
 cd x86_64-native-linuxapp-gcc
