@@ -236,15 +236,6 @@ scp dpdk-16.07.2.tar.xz root@192.168.122.170:; ssh root@192.168.122.170 'tar xf 
 
 EOF
 
-cat <<'EOF' | sudo tee chroot/root/6-trex.sh
-echo
-echo "cd /tmp; tar xf /root/usb/trex-latest.tar.gz"
-echo "cd v2.31; ./t-rex-64 -i -c 2"
-echo "./trex-console"
-echo "start -f stl/bench.py -m 100% --port 0 1 -t size=64,vm=cached" 
-echo
-EOF
-
 cat <<'EOF' | sudo tee -a chroot/etc/trex_cfg.yaml
 - port_limit      : 2
   version         : 2
@@ -306,7 +297,7 @@ cd ..
 EOF
 
 echo "creating qcow2 image ..."
-sudo virt-make-fs --size=+500M --format=qcow2 chroot filesystem.qcow2
+sudo virt-make-fs --size=+800M --format=qcow2 chroot filesystem.qcow2
 echo "done"
 
 # 8 Finish
@@ -314,4 +305,13 @@ exit 0
 
 # 999 backup
 
+## Create USB stick
+# grub-install.exe --boot-directory=D:\EFI --efi-directory=D:\ --removable
 
+## T-rex interactive shell
+cd /tmp; tar xf /root/usb/trex-latest.tar.gz
+cd v2.31; ./t-rex-64 -i -c 2
+
+## T-rex console
+./trex-console
+start -f stl/bench.py -m 100% --port 0 1 -t size=64,vm=cached
