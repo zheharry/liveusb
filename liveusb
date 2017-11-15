@@ -180,7 +180,7 @@ ovs-ofctl add-flow br0 in_port=3,action=output:1
 ovs-ofctl dump-flows br0
 EOF
 
-cat <<'EOF' | sudo tee chroot/root/4-power_on_vm-vhost-user-4VM.sh
+cat <<'EOF' | sudo tee chroot/root/4-power_on_vm-vhost-user-2VM.sh
 #!/bin/bash
 
 declare -a core=('10,11' '12,13' '14,15' '16,17');
@@ -219,8 +219,8 @@ do
         fi
 done
 
-echo "wait for 20s..."
-sleep 20
+echo "wait for 40s until VM boots..."
+sleep 40
 echo "done"
 
 EOF
