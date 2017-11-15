@@ -220,7 +220,18 @@ do
 done
 
 echo "wait for 60s until VM boots..."
-sleep 60
+echo "60..."
+sleep 10
+echo "50..."
+sleep 10
+echo "40..."
+sleep 10
+echo "30..."
+sleep 10
+echo "20..."
+sleep 10
+echo "10..."
+sleep 10
 echo "done"
 
 EOF
