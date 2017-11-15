@@ -219,8 +219,8 @@ do
         fi
 done
 
-echo "wait for 40s until VM boots..."
-sleep 40
+echo "wait for 60s until VM boots..."
+sleep 60
 echo "done"
 
 EOF
