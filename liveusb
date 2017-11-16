@@ -2,6 +2,11 @@
 # https://www.hiroom2.com/2016/06/10/ubuntu-16-04-create-customized-livedvd/
 # https://gist.github.com/jamiekurtz/26c46b3e594f8cdd453a
 # https://www.aioboot.com/en/install-grub2-from-windows/
+## auto run as root
+# before ubuntu 14
+# https://askubuntu.com/questions/290099/how-to-run-a-script-during-boot-as-root
+# start from ubuntu 16
+# https://unix.stackexchange.com/questions/47695/how-to-write-startup-script-for-systemd/47715#47715
 
 # 1 Install packages for creating LiveDVD
 sudo -E apt install -y livecd-rootfs libguestfs-tools systemd-container xorriso
@@ -28,14 +33,26 @@ echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
 echo "msr" | sudo tee -a chroot/etc/modules
 echo "auto enx001060b1dcc4" | sudo tee -a /etc/network/interfaces
 echo "	iface enx001060b1dcc4 inet dhcp" | sudo tee -a /etc/network/interfaces
-cat <<'EOF' | sudo tee -a chroot/root/.bashrc
+cat <<'EOF' | sudo tee -a chroot/usr/bin/usbwork
+#!/bin/bash
 USB=`mount | grep findiso | awk '{print $1}'`
-MOUNTED=`mount | grep root/usb`
+MOUNTED=`mount | grep root/work`
 if [ "$USB" != "" ] && [ "$MOUNTED" == "" ]; then
     mount -o remount,rw $USB
-    mkdir -p /root/usb
-    mount $USB /root/usb
+    mkdir -p /root/work
+    mount $USB /root/work
 fi
+EOF
+cat <<'EOF' | sudo tee -a chroot/etc/systemd/system/usbwork.service
+[Unit]
+Description=Mount USB stick to /root/work
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/usbwork
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 # 3.1 performance tune
@@ -58,26 +75,30 @@ insmod all_video\n\
 menuentry 'ubuntu-live' {\n\
   set isofile='/efi/iso/ubuntu-live.iso'\n\
   loopback loop \$isofile\n\
-  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=4-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=4-15 rcu_nocbs=4-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=8-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=8-15 rcu_nocbs=8-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
   initrd /boot/initrd.img-4.4.0-96-generic\n\
 }" > /boot/grub/grub.cfg
+
 adduser user --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
 adduser user sudo
 echo "user:qwer1234" | sudo chpasswd
 mkdir -p .ssh; ssh-keygen -f .ssh/id_rsa -t rsa -N ''
+chmod +x /usr/bin/usbwork
+systemctl enable usbwork.service
 EOF
 
 # 4.1 USB Ether dongle hack
-sudo cp ../AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source.tar.gz chroot/root/
+sudo cp ../r8152-2.09.0.tgz chroot/root/
 sudo systemd-nspawn -D chroot << EOF
-tar zxf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source.tar.gz
-cd AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source
+tar zxf r8152-2.09.0.tgz
+cd r8152-2.09.0
 CURRENT=4.4.0-96-generic make
 CURRENT=4.4.0-96-generic make install
+update-initramfs -u
 cd ..
-rm -rf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source*
-echo mii >> /etc/modules
-echo asix >> /etc/modules
+rm -rf r8152-2.09.0*
+echo "r8152" >> /etc/modules
+depmod -a 4.4.0-96-generic
 EOF
 
 # 5 dpdk/ovs/qemu/trex
@@ -146,7 +167,7 @@ ovs-vsctl --no-wait init
 #start OVS with DPDK portion
 export DB_SOCK=/usr/local/var/run/openvswitch/db.sock
 
-ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0x2 other_config:dpdk-socket-mem="2048" other_config:dpdk-file-prefix="ovs"
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0xf0 other_config:dpdk-socket-mem="4096" other_config:dpdk-file-prefix="ovs"
 
 ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
@@ -160,8 +181,6 @@ ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev
 # physical ports
 ovs-vsctl add-port br0 dpdk0 -- set Interface dpdk0 type=dpdk options:dpdk-devargs=0000:b3:00.0
 ovs-vsctl add-port br0 dpdk1 -- set Interface dpdk1 type=dpdk options:dpdk-devargs=0000:b3:00.1
-#ovs-vsctl add-port br0 dpdk2 -- set Interface dpdk2 type=dpdk options:dpdk-devargs=0000:b3:00.2
-#ovs-vsctl add-port br0 dpdk3 -- set Interface dpdk3 type=dpdk options:dpdk-devargs=0000:b3:00.3
 # vhost-user ports
 ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
@@ -169,8 +188,6 @@ ovs-vsctl add-port br0 vhost-user2 -- set Interface vhost-user2 type=dpdkvhostus
 ovs-vsctl add-port br0 vhost-user3 -- set Interface vhost-user3 type=dpdkvhostuser
 ovs-vsctl show
 
-#ovs-ofctl add-flow br0 in_port=2,dl_type=0x800,idle_timeout=0,action=output:1
-#ovs-ofctl add-flow br0 in_port=1,dl_type=0x800,idle_timeout=0,action=output:2
 ovs-ofctl add-flow br0 in_port=1,action=output:3
 ovs-ofctl add-flow br0 in_port=4,action=output:5
 ovs-ofctl add-flow br0 in_port=6,action=output:2
@@ -308,7 +325,7 @@ cd ..
 EOF
 
 echo "creating qcow2 image ..."
-sudo virt-make-fs --size=+800M --format=qcow2 chroot filesystem.qcow2
+sudo virt-make-fs --size=+500M --format=qcow2 chroot filesystem.qcow2
 echo "done"
 
 # 8 Finish
@@ -326,3 +343,29 @@ cd v2.31; ./t-rex-64 -i -c 2
 ## T-rex console
 ./trex-console
 start -f stl/bench.py -m 100% --port 0 1 -t size=64,vm=cached
+
+	#This is the cleanest way to install glibc-2.24 on top of Ubuntu 16.04.3 LTS as of 09/08/2017
+	#We need to have this hack as Ubuntu 16.04 is still using glibc-2.23.
+	#The issue and fix is described in: 
+	# https://sourceware.org/git/gitweb.cgi?p=glibc.git;h=83037ea1d9e84b1b44ed307f01cbb5eeac24e22d
+	#We need to watch out for any side effect as it's using packages from zesty (17.04)
+
+	#If use the script for external network, switch the repo below
+	cat > $ROOTFS_PATH/etc/apt/sources.list.d/zesty.list <<- "EOF"
+	deb http://us.archive.ubuntu.com/pub/mirrors/ubuntu zesty-security main restricted universe multiverse
+	deb-src http://us.archive.ubuntu.com/pub/mirrors/ubuntu zesty-security main restricted universe multiverse
+
+	###### Ubuntu Update Repos
+	#deb http://us.archive.ubuntu.com/ubuntu/ zesty-security main restricted universe multiverse
+	#deb-src http://us.archive.ubuntu.com/ubuntu/ zesty-security main restricted universe multiverse
+
+	EOF
+	$SEED_PATH/seed-chroot $ROOTFS_PATH "sleep 1"
+	chroot $ROOTFS_PATH /bin/bash -c "dpkg --add-architecture i386"
+	chroot $ROOTFS_PATH /bin/bash -c "apt-get update"
+	chroot $ROOTFS_PATH /bin/bash -c "apt-get -t zesty-security install -y libc6 libc6-dev libc6-dbg"
+	$SEED_PATH/seed-unchroot $ROOTFS_PATH
+	#Disable zesty repo after getting glibc
+
+
+
