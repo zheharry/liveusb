@@ -109,7 +109,7 @@ cd AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source
 CURRENT=4.4.0-96-generic make
 CURRENT=4.4.0-96-generic make install
 cd ..
-rm -rf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source*
+rm -rf AX88772C*
 echo mii >> /etc/modules
 echo asix >> /etc/modules
 
