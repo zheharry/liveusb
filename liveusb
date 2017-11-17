@@ -26,6 +26,7 @@ sudo -E lb build
 
 # 3 Customize rootfs
 sudo cp /etc/apt/sources.list chroot/etc/apt/
+sudo sed -i 's!//tw.!//!' chroot/etc/apt/sources.list
 sudo rm chroot/etc/resolv.conf
 echo "ubuntu-live" | sudo tee chroot/etc/hostname
 echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
@@ -41,6 +42,10 @@ if [ "$USB" != "" ] && [ "$MOUNTED" == "" ]; then
     mount -o remount,rw $USB
     mkdir -p /root/work
     mount $USB /root/work
+    if [ -d "/root/work/iNEK/src/tools" ]; then
+        python /root/work/iNEK/src/tools/isolcpus.py
+        python /root/work/iNEK/src/tools/boot_scripts.py
+    fi
 fi
 EOF
 cat <<'EOF' | sudo tee -a chroot/etc/systemd/system/usbwork.service
@@ -89,15 +94,26 @@ EOF
 
 # 4.1 USB Ether dongle hack
 sudo cp ../r8152-2.09.0.tgz chroot/root/
+sudo cp ../AX88772C.tgz chroot/root/
 sudo systemd-nspawn -D chroot << EOF
 tar zxf r8152-2.09.0.tgz
 cd r8152-2.09.0
 CURRENT=4.4.0-96-generic make
-CURRENT=4.4.0-96-generic make install
-update-initramfs -u
+CURRENT=4.4.0-96-generic make install install_rules
 cd ..
 rm -rf r8152-2.09.0*
 echo "r8152" >> /etc/modules
+
+tar zxf AX88772C.tgz
+cd AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source
+CURRENT=4.4.0-96-generic make
+CURRENT=4.4.0-96-generic make install
+cd ..
+rm -rf AX88772C_772B_772A_760_772_178_LINUX_DRIVER_v4.20.0_Source*
+echo mii >> /etc/modules
+echo asix >> /etc/modules
+
+update-initramfs -u
 depmod -a 4.4.0-96-generic
 EOF
 
@@ -207,7 +223,7 @@ for ((num=0; num<=1; num++))
 do
         p1=$((2*$num))
         p2=$((2*$num+1))
-        vm=/root/usb/EFI/ISO/filesystem.qcow2
+        vm=/root/work/EFI/ISO/filesystem.qcow2
         vm_name=VM-"$num"
         vnc="$num"
         n1=tap$num
@@ -337,7 +353,7 @@ exit 0
 # grub-install.exe --boot-directory=D:\EFI --efi-directory=D:\ --removable
 
 ## T-rex interactive shell
-cd /tmp; tar xf /root/usb/trex-latest.tar.gz
+cd /tmp; tar xf /root/work/trex-latest.tar.gz
 cd v2.31; ./t-rex-64 -i -c 2
 
 ## T-rex console
