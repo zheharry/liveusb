@@ -42,7 +42,6 @@ if [ "$USB" != "" ]; then
     pv /lib/live/mount/findiso/EFI/ISO/filesystem.qcow2 > /root/work/filesystem.qcow2
     rm /root/work/.lock
     chmod +x /root/*.sh
-    echo "export USBROOT=/lib/live/mount/findiso" >> /root/.bashrc
     if [ -d "/lib/live/mount/findiso/iNEK/src/tools" ]; then
         python /lib/live/mount/findiso/iNEK/src/tools/isolcpus.py
         python /lib/live/mount/findiso/iNEK/src/tools/boot_scripts.py
@@ -121,10 +120,10 @@ EOF
 # 5 dpdk/ovs/qemu/trex
 cat <<'EOF' | sudo tee chroot/root/1-compile_all.sh
 #!/bin/bash
-source /root/.bashrc
-DPDKVER="17.05.2"
-OVSVER="2.8.1"
-QEMUVER="2.9.1"
+export USBROOT="/lib/live/mount/findiso"
+export DPDKVER="17.05.2"
+export OVSVER="2.8.1"
+export QEMUVER="2.9.1"
 KVER="4.4.0-96-generic"
 ROOTDIR=`pwd`
 
@@ -147,7 +146,7 @@ sleep 1
 sleep 1
 
 cd x86_64-native-linuxapp-gcc
-EXTRA_CFLAGS="-Ofast" RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j4
+EXTRA_CFLAGS="-Ofast" RTE_KERNELDIR=/usr/src/linux-headers-${KVER} make -j
 cd $ROOTDIR
 
 tar zxf ${USBROOT}/openvswitch-${OVSVER}.tar.gz
@@ -161,7 +160,8 @@ cd $ROOTDIR
 tar xf ${USBROOT}/qemu-${QEMUVER}.tar.xz
 cd qemu-${QEMUVER}
 ./configure --target-list=x86_64-softmmu
-make -j4
+make -j
+cd $ROOTDIR
 EOF
 
 cat <<'EOF' | sudo tee chroot/root/2-start-ovs-dpdk.sh
@@ -244,7 +244,7 @@ do
            brctl addif $bra $n1
            ifconfig $n1 0.0.0.0 up
 
-           taskset -c "${core[$num]}"  ./qemu-2.9.0/x86_64-softmmu/qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=$vm -rtc clock=host \
+           taskset -c "${core[$num]}"  ./qemu-${QEMUVER}/x86_64-softmmu/qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=$vm -rtc clock=host \
           -kernel /boot/vmlinuz-4.4.0-96-generic -initrd /boot/initrd.img-4.4.0-96-generic -append 'root=/dev/sda rw console=ttyS0 nmi_watchdog=0' \
           -enable-kvm -name $vm_name \
           -object memory-backend-file,id=mem,size=4096M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -mem-prealloc \
@@ -275,13 +275,11 @@ EOF
 
 cat <<'EOF' | sudo tee chroot/root/5-prepare-vm.sh
 #!/bin/bash
-source /root/.bashrc
-DPDKVER="16.07.2"
 
 for ((num=0; num<=1; num++))
 do
     ssh-keyscan 192.168.122.$(($num+169)) >> .ssh/known_hosts
-    tar xf - ${USBROOT}/${DPDKVER}.tar.xz | ssh root@192.168.122.$(($num+169)) 'tar xf -; cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc -j; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; cd dpdk-stable-${DPDKVER}; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0'
+    cat ${USBROOT}/dpdk-16.07.2.tar.xz | ssh root@192.168.122.$(($num+169)) 'tar xfJ -; cd dpdk-stable-16.07.2; make install T=x86_64-native-linuxapp-gcc; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0'
 done
 
 EOF
@@ -318,6 +316,7 @@ sed -i 's/PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
 rm /root/*.sh
 mv .ssh/id_rsa.pub .ssh/authorized_keys
 rm .ssh/id_rsa
+rm /etc/fstab
 echo "auto ens3" >> /etc/network/interfaces
 echo "	iface ens3 inet dhcp" >> /etc/network/interfaces
 EOF
