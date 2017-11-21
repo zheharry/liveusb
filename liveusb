@@ -64,7 +64,7 @@ EOF
 # 3.1 performance tune
 
 # 4 extra packages
-sudo systemd-nspawn --setenv=http_proxy=$http_proxy -D chroot << EOF
+sudo systemd-nspawn --bind /var/cache/apt/archives --setenv=http_proxy=$http_proxy -D chroot << EOF
 apt update -y
 apt build-dep qemu
 apt install -y openssh-server net-tools nfs-common uml-utilities bridge-utils \
@@ -122,9 +122,9 @@ EOF
 cat <<'EOF' | sudo tee chroot/root/1-compile_all.sh
 #!/bin/bash
 source /root/.bashrc
-DPDKVER="17.05.1"
+DPDKVER="17.05.2"
 OVSVER="2.8.1"
-QEMUVER="2.9.0"
+QEMUVER="2.9.1"
 KVER="4.4.0-96-generic"
 ROOTDIR=`pwd`
 
@@ -137,7 +137,7 @@ cd dpdk-stable-${DPDKVER}
 sed -i 's/CONFIG_RTE_APP_TEST=y/CONFIG_RTE_APP_TEST=n/' config/common_linuxapp
 sed -i 's/CONFIG_RTE_BUILD_COMBINE_LIBS=n/CONFIG_RTE_BUILD_COMBINE_LIBS=y/' config/common_linuxapp
 sed -i 's/ROOTDIRS-y := lib drivers app/ROOTDIRS-y := lib drivers/' GNUmakefile
-make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER}
+make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src/linux-headers-${KVER} -j
 
 modprobe uio
 insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
@@ -154,7 +154,7 @@ tar zxf ${USBROOT}/openvswitch-${OVSVER}.tar.gz
 cd openvswitch-${OVSVER}
 ./boot.sh
 ./configure --with-dpdk=${ROOTDIR}/dpdk-stable-${DPDKVER}/x86_64-native-linuxapp-gcc CFLAGS="-Ofast"
-make CFLAGS="-Ofast -march=native" -j4
+make CFLAGS="-Ofast -march=native" -j
 make install
 cd $ROOTDIR
 
@@ -281,7 +281,7 @@ DPDKVER="16.07.2"
 for ((num=0; num<=1; num++))
 do
     ssh-keyscan 192.168.122.$(($num+169)) >> .ssh/known_hosts
-    tar xf - ${USBROOT}/${DPDKVER}.tar.xz | ssh root@192.168.122.$(($num+169)) 'tar xf -; cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; cd dpdk-stable-${DPDKVER}; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0'
+    tar xf - ${USBROOT}/${DPDKVER}.tar.xz | ssh root@192.168.122.$(($num+169)) 'tar xf -; cd dpdk-stable-${DPDKVER}; make install T=x86_64-native-linuxapp-gcc -j; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; cd dpdk-stable-${DPDKVER}; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0'
 done
 
 EOF
