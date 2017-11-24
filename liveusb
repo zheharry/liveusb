@@ -32,7 +32,7 @@ sudo mkdir chroot/root/work
 echo "ubuntu-live" | sudo tee chroot/etc/hostname
 echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
 echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
-echo "none	/root/work	tmpfs	nodev,nosuid,noatime,mode=1777,size=8192M	0	0" | sudo tee -a chroot/etc/fstab
+echo "none	/root/work	tmpfs	nodev,nosuid,noatime,mode=1777,size=4096M	0	0" | sudo tee -a chroot/etc/fstab
 #echo "msr" | sudo tee -a chroot/etc/modules
 cat <<'EOF' | sudo tee -a chroot/usr/bin/usbwork
 #!/bin/bash
@@ -80,7 +80,7 @@ insmod all_video\n\
 menuentry 'ubuntu-live' {\n\
   set isofile='/efi/iso/ubuntu-live.iso'\n\
   loopback loop \$isofile\n\
-  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=8-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=64 quiet nohz_full=8-15 rcu_nocbs=8-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
+  linux /boot/vmlinuz-4.4.0-96-generic nmi_watchdog=0 isolcpus=4-15 boot=live console=tty1 console=ttyS0,115200 intel_iommu=off default_hugepagesz=1G hugepagesz=1G hugepages=12 nohz_full=4-15 rcu_nocbs=4-15 intel_pstate=disable processor.max_cstate=0 intel_idele.max_cstate=0 \n\
   initrd /boot/initrd.img-4.4.0-96-generic\n\
 }" > /boot/grub/grub.cfg
 
@@ -140,9 +140,9 @@ make install T=x86_64-native-linuxapp-gcc DESTDIR=install RTE_KERNELDIR=/usr/src
 
 modprobe uio
 insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
-*tools/dpdk-devbind.py --bind=igb_uio b3:00.0
+*tools/dpdk-devbind.py --bind=igb_uio 81:00.0
 sleep 1
-*tools/dpdk-devbind.py --bind=igb_uio b3:00.1
+*tools/dpdk-devbind.py --bind=igb_uio 81:00.1
 sleep 1
 
 cd x86_64-native-linuxapp-gcc
@@ -189,7 +189,7 @@ ovs-vsctl --no-wait init
 #start OVS with DPDK portion
 export DB_SOCK=/usr/local/var/run/openvswitch/db.sock
 
-ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0xf0 other_config:dpdk-socket-mem="4096" other_config:dpdk-file-prefix="ovs"
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0xf0 other_config:dpdk-socket-mem="2048,2048"
 
 ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
@@ -201,8 +201,8 @@ cat <<'EOF' | sudo tee chroot/root/3-createports_4p_pvp_1pmd.sh
 ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev
 
 # physical ports
-ovs-vsctl add-port br0 dpdk0 -- set Interface dpdk0 type=dpdk options:dpdk-devargs=0000:b3:00.0
-ovs-vsctl add-port br0 dpdk1 -- set Interface dpdk1 type=dpdk options:dpdk-devargs=0000:b3:00.1
+ovs-vsctl add-port br0 dpdk0 -- set Interface dpdk0 type=dpdk options:dpdk-devargs=0000:81:00.0
+ovs-vsctl add-port br0 dpdk1 -- set Interface dpdk1 type=dpdk options:dpdk-devargs=0000:81:00.1
 # vhost-user ports
 ovs-vsctl add-port br0 vhost-user0 -- set Interface vhost-user0 type=dpdkvhostuser
 ovs-vsctl add-port br0 vhost-user1 -- set Interface vhost-user1 type=dpdkvhostuser
@@ -244,10 +244,10 @@ do
            brctl addif $bra $n1
            ifconfig $n1 0.0.0.0 up
 
-           taskset -c "${core[$num]}"  ./qemu-${QEMUVER}/x86_64-softmmu/qemu-system-x86_64 -m 4096 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=$vm -rtc clock=host \
+           taskset -c "${core[$num]}"  ./qemu-${QEMUVER}/x86_64-softmmu/qemu-system-x86_64 -m 2048 -smp 2,cores=2,threads=1,sockets=1 -cpu host -drive format=qcow2,file=$vm -rtc clock=host \
           -kernel /boot/vmlinuz-4.4.0-96-generic -initrd /boot/initrd.img-4.4.0-96-generic -append 'root=/dev/sda rw console=ttyS0 nmi_watchdog=0' \
           -enable-kvm -name $vm_name \
-          -object memory-backend-file,id=mem,size=4096M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -mem-prealloc \
+          -object memory-backend-file,id=mem,size=2048M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -mem-prealloc \
           -net nic,model=e1000,netdev=eth0,macaddr=$mac1 \
           -netdev tap,ifname=$n1,id=eth0,script=no,downscript=no \
           -chardev socket,id=char1,path=/usr/local/var/run/openvswitch/vhost-user"$p1" \
@@ -288,8 +288,8 @@ cat <<'EOF' | sudo tee -a chroot/etc/trex_cfg.yaml
 - port_limit      : 2
   version         : 2
 #List of interfaces. Change to suit your setup. Use ./dpdk_setup_ports.py -s to see available options
-  interfaces    : ["b3:00.2","b3:00.3"] 
-  limit_memory  : 2048
+  interfaces    : ["d8:00.0","d8:00.1"] 
+#  limit_memory  : 2048
   prefix        : trex
   port_info       :  # Port IPs. Change to suit your needs. In case of loopback, you can leave as is.
           - ip         : 1.1.1.1
