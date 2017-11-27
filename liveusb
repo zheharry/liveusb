@@ -74,7 +74,7 @@ apt install -y openssh-server net-tools nfs-common uml-utilities bridge-utils \
     linux-image-4.4.0-96-lowlatency linux-headers-4.4.0-96-lowlatency \
     vim tree less e2fsprogs zip exfat-fuse exfat-utils ntfs-3g screen curl pkg-config libglib2.0-dev libguestfs-tools \
     git build-essential subversion flex bison byacc qemu-kvm automake autoconf python-six htop libnuma-dev libtool pv lsof \
-    numactl system-config-kickstart python-pykickstart libssl-dev libcap-ng-dev libncap-dev libpcap-dev
+    numactl system-config-kickstart python-pykickstart libvirt-bin libssl-dev libcap-ng-dev libncap-dev libpcap-dev
 echo -e "set timeout=3\n\
 \n\
 insmod all_video\n\
@@ -315,7 +315,7 @@ sudo systemd-nspawn -D chroot << EOF
 echo "ubuntu-vm" | tee /etc/hostname
 echo 'uio' >> /etc/modules
 echo "127.0.0.1 ubuntu-vm localhost" | tee /etc/hosts
-apt remove -qq -y --purge qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
+apt remove -qq -y --purge libvirt-bin qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
 sed -i 's/PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
 rm /root/*.sh
 mv .ssh/id_rsa.pub .ssh/authorized_keys
