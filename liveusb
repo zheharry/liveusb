@@ -31,6 +31,8 @@ sudo rm chroot/etc/resolv.conf
 sudo mkdir chroot/root/work
 echo "ubuntu-live" | sudo tee chroot/etc/hostname
 echo "127.0.0.1 ubuntu-live localhost" | sudo tee chroot/etc/hosts
+echo "192.168.122.169 vm0" | sudo tee -a chroot/etc/hosts
+echo "192.168.122.170 vm1" | sudo tee -a chroot/etc/hosts
 echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
 echo "none	/root/work	tmpfs	nodev,nosuid,noatime,mode=1777,size=4096M	0	0" | sudo tee -a chroot/etc/fstab
 #echo "msr" | sudo tee -a chroot/etc/modules
@@ -71,8 +73,8 @@ apt install -y openssh-server net-tools nfs-common uml-utilities bridge-utils \
     linux-image-4.4.0-96-generic linux-headers-4.4.0-96-generic \
     linux-image-4.4.0-96-lowlatency linux-headers-4.4.0-96-lowlatency \
     vim tree less e2fsprogs zip exfat-fuse exfat-utils ntfs-3g screen curl pkg-config libglib2.0-dev libguestfs-tools \
-    git build-essential subversion flex bison byacc qemu-kvm automake autoconf python-six htop libnuma-dev libtool pv \
-    numactl system-config-kickstart python-pykickstart libvirt-bin libssl-dev libcap-ng-dev libncap-dev libpcap-dev
+    git build-essential subversion flex bison byacc qemu-kvm automake autoconf python-six htop libnuma-dev libtool pv lsof \
+    numactl system-config-kickstart python-pykickstart libssl-dev libcap-ng-dev libncap-dev libpcap-dev
 echo -e "set timeout=3\n\
 \n\
 insmod all_video\n\
@@ -174,6 +176,7 @@ rm -f /tmp/conf.db
 
 mkdir -p /usr/local/etc/openvswitch
 mkdir -p /usr/local/var/run/openvswitch
+mkdir -p /usr/local/var/log/openvswitch
 
 # initialize new OVS database
 ovsdb-tool create /usr/local/etc/openvswitch/conf.db /usr/local/share/openvswitch/vswitch.ovsschema
@@ -275,11 +278,12 @@ EOF
 
 cat <<'EOF' | sudo tee chroot/root/5-prepare-vm.sh
 #!/bin/bash
+export DPDKVER="16.07.2"
 
 for ((num=0; num<=1; num++))
 do
-    ssh-keyscan 192.168.122.$(($num+169)) >> .ssh/known_hosts
-    cat ${USBROOT}/dpdk-16.07.2.tar.xz | ssh root@192.168.122.$(($num+169)) 'tar xfJ -; cd dpdk-stable-16.07.2; make install T=x86_64-native-linuxapp-gcc; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0'
+    ssh-keyscan vm"$num" >> .ssh/known_hosts
+    cat ${USBROOT}/dpdk-${DPDKVER}.tar.xz | ssh root@vm"$num" 'tar xfJ -; cd dpdk-stable-*; make install T=x86_64-native-linuxapp-gcc; sysctl -w net.ipv4.ip_forward=0; sysctl -w kernel.randomize_va_space=0; echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages; mount -t hugetlbfs -o pagesize=2M none /dev/hugepages; modprobe uio; insmod x86_64-native-linuxapp-gcc/kmod/igb_uio.ko; *tools/dpdk-devbind.py --bind=igb_uio 00:04.0; sleep 1; *tools/dpdk-devbind.py --bind=igb_uio 00:05.0;sleep 1;screen -dm bash -c "dpdk-stable-*/x86_64-*/app/testpmd -- --auto-start"'
 done
 
 EOF
@@ -311,7 +315,7 @@ sudo systemd-nspawn -D chroot << EOF
 echo "ubuntu-vm" | tee /etc/hostname
 echo 'uio' >> /etc/modules
 echo "127.0.0.1 ubuntu-vm localhost" | tee /etc/hosts
-apt remove -qq -y --purge libvirt-bin qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
+apt remove -qq -y --purge qemu-kvm nfs-common git subversion libnuma-dev uml-utilities bridge-utils numactl system-config-kickstart python-pykickstart
 sed -i 's/PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
 rm /root/*.sh
 mv .ssh/id_rsa.pub .ssh/authorized_keys
