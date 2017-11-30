@@ -36,7 +36,7 @@ echo "192.168.122.170 vm1" | sudo tee -a chroot/etc/hosts
 echo "root:qwer1234" | sudo chpasswd --root `pwd`/chroot
 echo "none	/root/work	tmpfs	nodev,nosuid,noatime,mode=1777,size=4096M	0	0" | sudo tee -a chroot/etc/fstab
 #echo "msr" | sudo tee -a chroot/etc/modules
-cat <<'EOF' | sudo tee -a chroot/usr/bin/usbwork
+cat <<'EOF' | sudo tee chroot/usr/bin/usbwork
 #!/bin/bash
 USB=`mount | grep findiso | awk '{print $1}'`
 if [ "$USB" != "" ]; then
@@ -50,7 +50,7 @@ if [ "$USB" != "" ]; then
     fi
 fi
 EOF
-cat <<'EOF' | sudo tee -a chroot/etc/systemd/system/usbwork.service
+cat <<'EOF' | sudo tee chroot/etc/systemd/system/usbwork.service
 [Unit]
 Description=Mount USB stick to /root/work
 
@@ -60,6 +60,34 @@ ExecStart=/usr/bin/usbwork
 
 [Install]
 WantedBy=multi-user.target
+EOF
+cat <<'EOF' | sudo tee chroot/root/.config/htop/htoprc
+# Beware! This file is rewritten by htop when settings are changed in the interface.
+# The parser is also very primitive, and not human-friendly.
+fields=37 0 48 17 18 38 39 40 2 46 47 49 1 
+sort_key=46
+sort_direction=1
+hide_threads=0
+hide_kernel_threads=1
+hide_userland_threads=0
+shadow_other_users=0
+show_thread_names=0
+show_program_path=0
+highlight_base_name=0
+highlight_megabytes=1
+highlight_threads=1
+tree_view=1
+header_margin=1
+detailed_cpu_time=0
+cpu_count_from_zero=1
+update_process_names=0
+account_guest_in_cpu_meter=0
+color_scheme=0
+delay=15
+left_meters=LeftCPUs2 Memory Swap 
+left_meter_modes=1 1 1 
+right_meters=RightCPUs2 Tasks LoadAverage Uptime 
+right_meter_modes=1 2 2 2 
 EOF
 
 # 3.1 performance tune
@@ -126,6 +154,7 @@ export USBROOT="/lib/live/mount/findiso"
 export DPDKVER="17.05.2"
 export OVSVER="2.8.1"
 export QEMUVER="2.9.1"
+export TREXVER="v2.32"
 KVER="4.4.0-96-generic"
 ROOTDIR=`pwd`
 
@@ -164,6 +193,10 @@ cd qemu-${QEMUVER}
 ./configure --target-list=x86_64-softmmu
 make -j
 cd $ROOTDIR
+
+cd /tmp/
+tar zxf ${USBROOT}/${TREXVER}.tar.gz
+cd $ROOTDIR
 EOF
 
 cat <<'EOF' | sudo tee chroot/root/2-start-ovs-dpdk.sh
@@ -192,7 +225,10 @@ ovs-vsctl --no-wait init
 #start OVS with DPDK portion
 export DB_SOCK=/usr/local/var/run/openvswitch/db.sock
 
-ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true other_config:dpdk-lcore-mask=0xf0 other_config:dpdk-socket-mem="2048,2048"
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-lcore-mask=0xf000
+ovs-vsctl --no-wait set Open_vSwitch . other_config:pmd-cpu-mask=0xe000
+ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-socket-mem="2048,2048"
 
 ovs-vswitchd unix:$DB_SOCK --pidfile --detach
 EOF
@@ -225,7 +261,7 @@ EOF
 cat <<'EOF' | sudo tee chroot/root/4-power_on_vm-vhost-user-2VM.sh
 #!/bin/bash
 
-declare -a core=('10,11' '12,13' '14,15' '16,17');
+declare -a core=('8,9' '10,11' '16,17' '18,19');
 declare -a macid=('00:01:00:00:00:01' '00:02:00:00:00:02' '00:03:00:00:00:03' '00:04:00:00:00:04' '00:05:00:00:00:05' '00:06:00:00:00:06' '00:07:00:00:00:07' '00:08:00:00:00:08');
 bra=virbr0
 for ((num=0; num<=1; num++))
@@ -294,7 +330,7 @@ cat <<'EOF' | sudo tee -a chroot/etc/trex_cfg.yaml
 - port_limit      : 2
   version         : 2
 #List of interfaces. Change to suit your setup. Use ./dpdk_setup_ports.py -s to see available options
-  interfaces    : ["d8:00.0","d8:00.1"] 
+  interfaces    : ["18:00.0","18:00.1"] 
 #  limit_memory  : 2048
   prefix        : trex
   port_info       :  # Port IPs. Change to suit your needs. In case of loopback, you can leave as is.
